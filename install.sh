@@ -34,6 +34,41 @@ ln -sf "$REPO_DIR/bin/routermon-collect" "$BIN_DIR/routermon-collect"
 ln -sf "$REPO_DIR/bin/routermon-ctl" "$BIN_DIR/routermon-ctl"
 ln -sf "$REPO_DIR/bin/routermon-speedtest" "$BIN_DIR/routermon-speedtest"
 echo "Linked helper scripts into $BIN_DIR"
+
+# --- resident collector (systemd --user): keeps the tmpfs snapshot fresh so the
+#     widgets only ever read a file in-process (no per-poll process spawns) ---
+mkdir -p ~/.config/systemd/user
+# Pin the light resident collector to efficiency/compact cores when the CPU is
+# hybrid (Intel E, AMD Zen 5c, ARM LITTLE). Detector returns nothing otherwise.
+AFFINITY=""
+ECORES=$(python3 -S "$REPO_DIR/bin/routermon-ecores" 2>/dev/null)
+[ -n "$ECORES" ] && AFFINITY="CPUAffinity=$ECORES" && echo "Pinning collector to efficiency cores: $ECORES"
+cat <<EOF > ~/.config/systemd/user/linux-router-monitor.service
+[Unit]
+Description=Linux-Router-Monitor resident collector
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=$REPO_DIR
+ExecStart=/usr/bin/python3 -S $REPO_DIR/bin/routermon-collect --serve
+Restart=always
+RestartSec=3
+Nice=19
+$AFFINITY
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now linux-router-monitor.service
+echo "Enabled resident collector service (linux-router-monitor.service)"
+
+# --- allow the widgets to read the tmpfs snapshot in-process via QML XHR ---
+# (Qt blocks file:// XHR unless this is set; applies to the whole Plasma session)
+mkdir -p ~/.config/plasma-workspace/env
+echo 'export QML_XHR_ALLOW_FILE_READ=1' > ~/.config/plasma-workspace/env/linux-router-monitor.sh
+echo "Set QML_XHR_ALLOW_FILE_READ=1 for the Plasma session (in-process widget reads)"
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) echo "  Note: $BIN_DIR is not in your PATH (widgets use absolute paths, so this is fine)." ;;

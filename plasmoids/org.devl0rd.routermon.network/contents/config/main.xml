@@ -5,7 +5,7 @@
       http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
     <kcfgfile name=""/>
     <group name="General">
-        <entry name="pollInterval" type="Int"><default>2000</default></entry>
+        <entry name="pollInterval" type="Int"><default>500</default></entry>
         <entry name="accentColor" type="String"><default></default></entry>
         <entry name="showCharts" type="Bool"><default>true</default></entry>
         <entry name="showPorts" type="Bool"><default>true</default></entry>

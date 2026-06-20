@@ -73,7 +73,18 @@ def main():
     c = cfg()
 
     try:
-        if action == "reboot":
+        if action == "pause":
+            mode = sys.argv[2] if len(sys.argv) > 2 else "toggle"
+            pf = os.path.join(RUNDIR, "paused")
+            want = {"on": True, "off": False}.get(mode, not os.path.exists(pf))
+            if want:
+                os.makedirs(RUNDIR, exist_ok=True)
+                open(pf, "w").close()
+            elif os.path.exists(pf):
+                os.remove(pf)
+            out(True, "Paused" if want else "Resumed")
+
+        elif action == "reboot":
             r = ssh(c, "reboot")
             out(r.returncode == 0, "Reboot command sent" if r.returncode == 0 else r.stderr.strip())
 

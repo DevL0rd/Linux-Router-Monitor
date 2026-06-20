@@ -44,6 +44,8 @@ PlasmoidItem {
         implicitWidth: Kirigami.Units.gridUnit * 19
         implicitHeight: Kirigami.Units.gridUnit * 16
 
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -59,10 +61,12 @@ PlasmoidItem {
 
             // ---- per-band cards ----
             Repeater {
-                model: root.radios
+                // count-based model so band cards persist (airtime bar animates
+                // value->value, not 0->value) across polls
+                model: root.radios.length
                 Rectangle {
                     id: bandCard
-                    property var r: modelData
+                    property var r: root.radios[index] || ({})
                     Layout.fillWidth: true
                     Layout.preferredHeight: bandCol.implicitHeight + Kirigami.Units.smallSpacing * 2
                     radius: Kirigami.Units.smallSpacing

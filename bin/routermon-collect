@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -S
 """Linux-Router-Monitor :: desktop-side collector.
 
 Invoked by the plasmoids once per poll. Guarantees the router is hit at most
@@ -13,15 +13,13 @@ Usage:  routermon-collect [section]
 
 Prints the requested section of the latest snapshot as JSON on stdout.
 """
-import base64
 import fcntl
 import json
 import os
-import subprocess
 import sys
 import time
-import urllib.request
-import urllib.error
+# subprocess / urllib / base64 are imported lazily inside the refresh + AdGuard
+# paths only, so the common cache-read path starts a near-empty interpreter.
 
 APP = "Linux-Router-Monitor"
 CONFIG = os.path.expanduser(f"~/.config/{APP}/config.json")
@@ -30,6 +28,7 @@ CACHE = os.path.join(RUNDIR, "data.json")
 STATE = os.path.join(RUNDIR, "state.json")
 LOCK = os.path.join(RUNDIR, "refresh.lock")
 SOCK = os.path.join(RUNDIR, "cm.sock")
+PAUSE = os.path.join(RUNDIR, "paused")
 LOGDIR = os.path.expanduser(f"~/.local/state/{APP}")
 LOG = os.path.join(LOGDIR, "monitor.log")
 
@@ -69,9 +68,12 @@ def ssh_base(cfg):
     ]
 
 
-def fetch_remote(cfg):
+def fetch_remote(cfg, do_ping=True, do_slow=True):
+    import subprocess
+    # args: ping_target, do_ping, do_slow
     cmd = ssh_base(cfg) + [
-        f"sh {cfg.get('remote_script', '/jffs/lrm-collect.sh')} {cfg.get('ping_target', '8.8.8.8')}"
+        f"sh {cfg.get('remote_script', '/jffs/lrm-collect.sh')} "
+        f"{cfg.get('ping_target', '8.8.8.8')} {1 if do_ping else 0} {1 if do_slow else 0}"
     ]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     if out.returncode != 0 or "END=1" not in out.stdout:
@@ -80,8 +82,8 @@ def fetch_remote(cfg):
 
 
 def parse_remote(raw):
-    d = {"radios": [], "stations": [], "leases": [], "ifaces": {},
-         "ports": [], "arp": [], "blocked": [], "_stat": {}}
+    d = {"radios": [], "stations": [], "stations_slow": [], "leases": [], "ifaces": {},
+         "ports": [], "arp": [], "blocked": [], "rcount": [], "_stat": {}}
     for line in raw.splitlines():
         if not line:
             continue
@@ -96,8 +98,12 @@ def parse_remote(raw):
             d["ports"].append({"port": p[1], "link": p[2]})
         elif line.startswith("RADIO "):
             d["radios"].append(_kv(line[6:]))
+        elif line.startswith("RCOUNT "):
+            d["rcount"].append(_kv(line[7:]))
         elif line.startswith("STA "):
             d["stations"].append(_kv(line[4:]))
+        elif line.startswith("STASLOW "):
+            d["stations_slow"].append(_kv(line[8:]))
         elif line.startswith("LEASE "):
             d["leases"].append(_kv(line[6:]))
         elif line.startswith("ARP "):
@@ -166,6 +172,9 @@ def rate(cur, old, dt):
 
 
 def fetch_agh(cfg):
+    import base64
+    import urllib.error
+    import urllib.request
     a = cfg.get("adguard", {})
     if not a.get("enabled"):
         return None
@@ -187,12 +196,25 @@ def fetch_agh(cfg):
 
 
 def build(cfg, prev):
-    raw = fetch_remote(cfg)
+    # Three cadences: FAST (every poll) = CPU/throughput/per-client signal+traffic;
+    # SLOW (every slow_every) = nvram statics, per-radio meta, leases, firewall;
+    # PING + AdGuard, even less often. Slow/ping/agh values are carried forward.
+    tick = int(prev.get("tick", 0)) + 1
+    slow_every = max(1, int(cfg.get("slow_every", 10)))
+    do_slow = (prev.get("slow") is None) or (tick % slow_every == 0)
+    # Ping and AdGuard are fetched by the caller (serve) so their latency
+    # (~2.6s and ~0.6s) never blocks the fast snapshot. build() carries both.
+    prev_ping = prev.get("ping") or {}
+
+    raw = fetch_remote(cfg, False, do_slow)
     p = parse_remote(raw)
     now = _num(p.get("TS"), float, time.time())
     dt = now - prev.get("ts", now) if prev else 0
 
-    # ---- rates ----
+    ping_rtt = prev_ping.get("rtt", 0)
+    ping_loss = prev_ping.get("loss", 0)
+
+    # ---- FAST: throughput, cpu, per-station signal/traffic ----
     ifr = {}
     for name, c in p["ifaces"].items():
         po = (prev.get("ifaces") or {}).get(name)
@@ -202,79 +224,97 @@ def build(cfg, prev):
         }
     wan_if = p.get("wan_ifname", "ppp0")
     wan = ifr.get(wan_if, {"rx_bps": 0, "tx_bps": 0})
-
     cpu = cpu_util(p["_stat"], prev.get("stat", {}))
 
-    # per-station throughput from cumulative byte deltas
-    prev_sta = prev.get("sta") or {}
-    sta_state = {}
+    # Per-client signal + link rates change slowly, so they ride the slow tick
+    # (one sta_info per client) and are carried forward; the fast tick only does
+    # the bulk `wl bs_data` (one call per radio) for live throughput.
+    if do_slow and p.get("stations_slow"):
+        sta_slow = {}
+        for s in p["stations_slow"]:
+            sta_slow[s.get("mac", "").lower()] = {
+                "rssi": _num(s.get("rssi"), int),
+                "tx_mbps": round(_num(s.get("txrate")) / 1000.0, 1),
+                "rx_mbps": round(_num(s.get("rxrate")) / 1000.0, 1),
+            }
+    else:
+        sta_slow = prev.get("sta_slow") or {}
+
     stations = []
     for s in p["stations"]:
         mac = s.get("mac", "")
-        tot = _num(s.get("txbytes"), int) + _num(s.get("rxbytes"), int)
-        sta_state[mac] = tot
+        sl = sta_slow.get(mac.lower(), {})
         stations.append({
             "mac": mac, "band": s.get("band"),
-            "rssi": _num(s.get("rssi"), int),
-            "tx_mbps": round(_num(s.get("txrate")) / 1000.0, 1),
-            "rx_mbps": round(_num(s.get("rxrate")) / 1000.0, 1),
-            "traffic_bps": round(rate(tot, prev_sta.get(mac), dt), 0),
+            "rssi": sl.get("rssi", 0),
+            "tx_mbps": sl.get("tx_mbps", 0),
+            "rx_mbps": sl.get("rx_mbps", 0),
+            "phy_mbps": round(_num(s.get("phy")), 0),
+            # bs_data reports live throughput in Mbit/s -> bytes/s for traffic_bps
+            "traffic_bps": round(_num(s.get("data_mbps")) * 125000.0, 0),
         })
-
-    # connected = reachable in ARP (flags != 0x0) or associated on WiFi
-    arp_up = {a["mac"].lower() for a in p["arp"] if a.get("flags") != "0x0"}
     wifi_macs = {s.get("mac", "").lower() for s in p["stations"]}
-    online_macs = arp_up | wifi_macs
-    blocked_macs = {m.lower() for m in p["blocked"]}
     sta_traffic = {s["mac"].lower(): s["traffic_bps"] for s in stations}
+    rcount = {r.get("band"): _num(r.get("clients"), int) for r in p["rcount"]}
 
-    mt = _num(p.get("mem_total"), int)
-    ma = _num(p.get("mem_avail"), int)
-    st = _num(p.get("swap_total"), int)
-    sf = _num(p.get("swap_free"), int)
+    mt = _num(p.get("mem_total"), int); ma = _num(p.get("mem_avail"), int)
+    st = _num(p.get("swap_total"), int); sf = _num(p.get("swap_free"), int)
 
-    agh = fetch_agh(cfg)
-    dns = None
-    if agh and agh.get("stats"):
-        s = agh["stats"]
-        q = _num(s.get("num_dns_queries"), int)
-        b = _num(s.get("num_blocked_filtering"), int)
-        pq = (prev.get("dns") or {}).get("queries_total")
-        dns = {
-            "queries_total": q,
-            "blocked_total": b,
-            "blocked_pct": round(100.0 * b / q, 1) if q else 0.0,
-            "qps": round(rate(q, pq, dt), 1),
-            "avg_ms": round(_num(s.get("avg_processing_time")) * 1000, 1),
-            "malware": _num(s.get("num_replaced_safebrowsing"), int),
-            "parental": _num(s.get("num_replaced_parental"), int),
-            "top_queried": _toplist(s.get("top_queried_domains")),
-            "top_blocked": _toplist(s.get("top_blocked_domains")),
-            "top_clients": _toplist(s.get("top_clients")),
-            "protection": (agh.get("status") or {}).get("protection_enabled"),
-            "url": cfg.get("adguard", {}).get("url", ""),
+    # ---- SLOW: build statics/meta, or carry forward ----
+    if do_slow:
+        slow = {
+            "info": {
+                "model": p.get("model"), "fw": p.get("fw"), "lan_ip": p.get("lan_ip"),
+                "admin_url": ("http://" + p["lan_ip"]) if p.get("lan_ip") else "",
+                "agh_url": cfg.get("adguard", {}).get("url", ""),
+            },
+            "wan": {
+                "wan_proto": p.get("wan_proto"), "wan_ip": p.get("wan_ip"),
+                "wan_gw": p.get("wan_gw"), "wan_dns": p.get("wan_dns"),
+                "wan_up": p.get("wan_state") == "2",
+            },
+            "ports": [pt for pt in p["ports"] if "Up" in pt["link"]] or p["ports"],
+            "radios": [{
+                "band": r.get("band"), "ssid": r.get("ssid"), "on": r.get("radio") == "1",
+                "chan": _num(r.get("chan"), int), "width": r.get("width"),
+                "noise": _num(r.get("noise"), int), "txpower": _num(r.get("txpower"), int),
+                "temp": _num(r.get("temp"), int), "busy": _num(r.get("busy"), int),
+                "glitch": _num(r.get("glitch"), int), "badplcp": _num(r.get("badplcp"), int),
+                "dfs": r.get("dfs"),
+            } for r in p["radios"]],
+            "leases": [{"mac": l.get("mac"), "ip": l.get("ip"),
+                        "name": (l.get("name") if l.get("name") != "*" else l.get("ip"))}
+                       for l in p["leases"]],
+            "arp_up": sorted({a["mac"].lower() for a in p["arp"] if a.get("flags") != "0x0"}),
+            "blocked": sorted({m.lower() for m in p["blocked"]}),
+            "security": {"wrs_protect": p.get("wrs_protect") == "1",
+                         "wrs_mals": p.get("wrs_mals") == "1"},
         }
-        # show friendly device names for top clients when the IP has a lease
-        ip2name = {l.get("ip"): (l.get("name") if l.get("name") != "*" else l.get("ip"))
-                   for l in p["leases"]}
-        for c in dns["top_clients"]:
-            c["name"] = ip2name.get(c["name"], c["name"])
+    else:
+        slow = prev.get("slow") or {}
+
+    online = set(slow.get("arp_up", [])) | wifi_macs
+    blocked = set(slow.get("blocked", []))
+    radios = []
+    for r in slow.get("radios", []):
+        radios.append({**r, "clients": rcount.get(r.get("band"), 0)})
+    leases = [{**l, "connected": (l.get("mac", "").lower() in online),
+               "blocked": (l.get("mac", "").lower() in blocked),
+               "traffic_bps": sta_traffic.get(l.get("mac", "").lower(), -1)}
+              for l in slow.get("leases", [])]
+
+    # AdGuard is fetched separately (see serve / compute_dns); carry it here
+    dns = prev.get("dns_cache")
 
     snap = {
         "ts": now,
         "online": True,
-        "info": {
-            "model": p.get("model"), "fw": p.get("fw"),
-            "uptime": _num(p.get("uptime"), float),
-            "lan_ip": p.get("lan_ip"),
-            "admin_url": ("http://" + p["lan_ip"]) if p.get("lan_ip") else "",
-            "agh_url": cfg.get("adguard", {}).get("url", ""),
-        },
+        "paused": False,
+        "info": {**slow.get("info", {}), "uptime": _num(p.get("uptime"), float)},
         "system": {
             "cpu": cpu,
             "load": [_num(p.get("load1")), _num(p.get("load5")), _num(p.get("load15"))],
-            "procs": p.get("procs"),
-            "cores": _num(p.get("cores"), int),
+            "procs": p.get("procs"), "cores": _num(p.get("cores"), int),
             "mem_total": mt, "mem_avail": ma,
             "mem_used_pct": round(100.0 * (mt - ma) / mt, 1) if mt else 0.0,
             "swap_total": st, "swap_used": st - sf,
@@ -284,53 +324,75 @@ def build(cfg, prev):
             "conntrack_max": _num(p.get("conntrack_max"), int),
         },
         "network": {
-            "wan_proto": p.get("wan_proto"), "wan_ip": p.get("wan_ip"),
-            "wan_gw": p.get("wan_gw"), "wan_dns": p.get("wan_dns"),
-            "wan_up": p.get("wan_state") == "2",
+            **slow.get("wan", {}),
             "down_mbps": round(wan["rx_bps"] * 8 / 1e6, 2),
             "up_mbps": round(wan["tx_bps"] * 8 / 1e6, 2),
-            "ping_rtt": _num(p.get("ping_rtt")),
-            "ping_loss": _num(p.get("ping_loss")),
-            "ports": [pt for pt in p["ports"] if "Up" in pt["link"]] or p["ports"],
+            "ping_rtt": ping_rtt, "ping_loss": ping_loss,
+            "ports": slow.get("ports", []),
             "ifaces": {k: {
                 "rx_mbps": round(ifr[k]["rx_bps"] * 8 / 1e6, 2),
                 "tx_mbps": round(ifr[k]["tx_bps"] * 8 / 1e6, 2),
             } for k in ("br0", wan_if) if k in ifr},
         },
-        "wifi": {
-            "radios": [{
-                "band": r.get("band"), "ssid": r.get("ssid"),
-                "on": r.get("radio") == "1",
-                "chan": _num(r.get("chan"), int), "width": r.get("width"),
-                "noise": _num(r.get("noise"), int),
-                "txpower": _num(r.get("txpower"), int),
-                "temp": _num(r.get("temp"), int),
-                "busy": _num(r.get("busy"), int),
-                "glitch": _num(r.get("glitch"), int),
-                "badplcp": _num(r.get("badplcp"), int),
-                "dfs": r.get("dfs"), "clients": _num(r.get("clients"), int),
-            } for r in p["radios"]],
-            "stations": stations,
-        },
-        "clients": {
-            "count": len(p["leases"]),
-            "leases": [{"mac": l.get("mac"), "ip": l.get("ip"),
-                        "name": (l.get("name") if l.get("name") != "*" else l.get("ip")),
-                        "connected": (l.get("mac", "").lower() in online_macs),
-                        "blocked": (l.get("mac", "").lower() in blocked_macs),
-                        "traffic_bps": sta_traffic.get(l.get("mac", "").lower(), -1)}
-                       for l in p["leases"]],
-        },
+        "wifi": {"radios": radios, "stations": stations},
+        "clients": {"count": len(leases), "leases": leases},
         "dns": dns,
-        "security": {
-            "wrs_protect": p.get("wrs_protect") == "1",
-            "wrs_mals": p.get("wrs_mals") == "1",
-        },
+        "security": slow.get("security", {}),
     }
-    # state carried to next refresh for rate/delta math
-    new_state = {"ts": now, "stat": p["_stat"], "ifaces": p["ifaces"], "sta": sta_state,
-                 "dns": {"queries_total": dns["queries_total"]} if dns else {}}
+    new_state = {"ts": now, "stat": p["_stat"], "ifaces": p["ifaces"], "sta_slow": sta_slow,
+                 "tick": tick, "ping": {"rtt": ping_rtt, "loss": ping_loss},
+                 "dns_cache": dns, "agh_prev": prev.get("agh_prev") or {}, "slow": slow}
     return snap, new_state
+
+
+def compute_ping(cfg):
+    """WAN latency via the router (~2.6s). Separate from build() so it never
+    blocks the fast snapshot."""
+    import re
+    import subprocess
+    cmd = ssh_base(cfg) + [f"ping -c 3 -w 4 {cfg.get('ping_target', '8.8.8.8')}"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"=\s*[\d.]+/([\d.]+)/", out)
+    if not m:
+        return None
+    loss = re.search(r"(\d+)% packet loss", out)
+    return {"rtt": round(float(m.group(1)), 1), "loss": int(loss.group(1)) if loss else 0}
+
+
+def compute_dns(cfg, agh_prev, leases, now):
+    """Fetch AdGuard stats and build the dns block. Separate from build() so its
+    ~0.6s latency runs on the medium tick without delaying the fast snapshot."""
+    agh = fetch_agh(cfg)
+    if not (agh and agh.get("stats")):
+        return None, agh_prev
+    s = agh["stats"]
+    q = _num(s.get("num_dns_queries"), int)
+    b = _num(s.get("num_blocked_filtering"), int)
+    adt = now - agh_prev.get("ts", now)
+    dns = {
+        "queries_total": q, "blocked_total": b,
+        "blocked_pct": round(100.0 * b / q, 1) if q else 0.0,
+        "qps": round(rate(q, agh_prev.get("q"), adt), 1),
+        "avg_ms": round(_num(s.get("avg_processing_time")) * 1000, 1),
+        "malware": _num(s.get("num_replaced_safebrowsing"), int),
+        "parental": _num(s.get("num_replaced_parental"), int),
+        "top_queried": _toplist(s.get("top_queried_domains")),
+        "top_blocked": _toplist(s.get("top_blocked_domains")),
+        "top_clients": _toplist(s.get("top_clients")),
+        "protection": (agh.get("status") or {}).get("protection_enabled"),
+        "url": cfg.get("adguard", {}).get("url", ""),
+        # AdGuard's own time-series (per time_unit) — plot it directly
+        "history": s.get("dns_queries") or [],
+        "history_blocked": s.get("blocked_filtering") or [],
+        "time_units": s.get("time_units"),
+    }
+    ip2name = {l.get("ip"): l.get("name") for l in leases}
+    for c in dns["top_clients"]:
+        c["name"] = ip2name.get(c["name"], c["name"])
+    return dns, {"q": q, "ts": now}
 
 
 def refresh(cfg):
@@ -340,6 +402,16 @@ def refresh(cfg):
         prev = {}
     try:
         snap, state = build(cfg, prev)
+        dns, state["agh_prev"] = compute_dns(cfg, state.get("agh_prev") or {},
+                                             snap["clients"]["leases"], snap["ts"])
+        if dns is not None:
+            snap["dns"] = dns
+            state["dns_cache"] = dns
+        pg = compute_ping(cfg)
+        if pg is not None:
+            state["ping"] = pg
+            snap["network"]["ping_rtt"] = pg["rtt"]
+            snap["network"]["ping_loss"] = pg["loss"]
     except Exception as e:
         log(f"refresh error: {e}")
         snap = {"ts": time.time(), "online": False, "error": str(e)}
@@ -356,9 +428,83 @@ def _atomic_write(path, obj):
     os.replace(tmp, path)
 
 
+def serve():
+    """Resident mode: one long-lived process that keeps the cache fresh, so the
+    widgets never have to spawn anything (they read the cache file in-process).
+    Run as a systemd --user service."""
+    os.makedirs(RUNDIR, exist_ok=True)
+    lk = open(os.path.join(RUNDIR, "serve.lock"), "w")
+    try:
+        fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return  # another server is already running
+    prev = {}
+    while True:
+        start = time.monotonic()
+        try:
+            cfg = load_config()
+        except (ValueError, OSError):
+            time.sleep(2)
+            continue
+        interval = float(cfg.get("poll_interval", 0.5))
+        if os.path.exists(PAUSE):
+            try:
+                data = json.load(open(CACHE))
+            except (ValueError, OSError):
+                data = {"online": True}
+            data["paused"] = True
+            _atomic_write(CACHE, data)
+        else:
+            ok = True
+            try:
+                snap, prev = build(cfg, prev)
+            except Exception as e:
+                log(f"serve error: {e}")
+                snap = {"ts": time.time(), "online": False, "error": str(e), "paused": False}
+                ok = False
+            _atomic_write(CACHE, snap)   # fast data written first (never blocked)
+            # SLOW tick: AdGuard (~0.6s) + WAN ping (~2.6s), each fetched after the
+            # fast write and written separately so they never block fast data
+            slow_every = max(1, int(cfg.get("slow_every", 10)))
+            tick = prev.get("tick", 0)
+            slow_due = tick == 1 or tick % slow_every == 0
+            if ok and (prev.get("dns_cache") is None or slow_due):
+                dns, prev["agh_prev"] = compute_dns(
+                    cfg, prev.get("agh_prev") or {},
+                    snap.get("clients", {}).get("leases", []), snap.get("ts", time.time()))
+                if dns is not None:
+                    snap["dns"] = dns
+                    prev["dns_cache"] = dns
+                    _atomic_write(CACHE, snap)
+            if ok and slow_due:
+                pg = compute_ping(cfg)
+                if pg is not None:
+                    prev["ping"] = pg
+                    snap.setdefault("network", {})["ping_rtt"] = pg["rtt"]
+                    snap["network"]["ping_loss"] = pg["loss"]
+                    _atomic_write(CACHE, snap)
+        # subtract the work time so each cycle is ~interval, not interval + work
+        time.sleep(max(0.0, interval - (time.monotonic() - start)))
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        serve()
+        return
+
     section = sys.argv[1] if len(sys.argv) > 1 else "all"
     os.makedirs(RUNDIR, exist_ok=True)
+
+    # Global pause: serve the last snapshot (flagged paused), don't touch the router
+    if os.path.exists(PAUSE):
+        try:
+            data = json.load(open(CACHE))
+        except (ValueError, OSError):
+            data = {"online": True}
+        data["paused"] = True
+        print(json.dumps(data if section == "all" or section not in data else data[section]))
+        return
+
     cfg = load_config()
     ttl = float(cfg.get("cache_ttl", 1.8))
 

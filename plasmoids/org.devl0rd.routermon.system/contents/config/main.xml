@@ -6,7 +6,7 @@
     <kcfgfile name=""/>
     <group name="General">
         <entry name="pollInterval" type="Int">
-            <default>2000</default>
+            <default>500</default>
         </entry>
         <entry name="accentColor" type="String">
             <default></default>

@@ -61,6 +61,8 @@ PlasmoidItem {
         implicitWidth: Kirigami.Units.gridUnit * 18
         implicitHeight: Kirigami.Units.gridUnit * 20
 
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -147,12 +149,17 @@ PlasmoidItem {
                     MiniStat { label: i18n("Avg"); value: (root.hasDns ? root.dns.avg_ms : 0) + " ms"; valueColor: Fmt.heat(root.hasDns ? root.dns.avg_ms : 0, 50, 100, Kirigami.Theme) }
                 }
 
-                HistoryChart {
+                // AdGuard's own per-hour query history (last 24h) — plotted directly,
+                // no client-side accumulation
+                Sparkline {
                     Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
                     visible: Plasmoid.configuration.showChart
-                    value: root.hasDns ? root.dns.qps : 0
+                    values: root.hasDns ? (root.dns.history || []) : []
                     lineColor: root.accent
-                    sampleInterval: Plasmoid.configuration.pollInterval
+                    tipText: function(v, i, t) {
+                        var ago = t - 1 - i
+                        return v.toLocaleString() + " queries · " + (ago === 0 ? i18n("this hour") : i18n("%1h ago", ago))
+                    }
                 }
 
                 // top blocked

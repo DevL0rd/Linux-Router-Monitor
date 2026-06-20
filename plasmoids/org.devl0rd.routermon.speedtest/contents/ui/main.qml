@@ -24,6 +24,9 @@ PlasmoidItem {
         ? Plasmoid.configuration.accentColor : Kirigami.Theme.highlightColor
     readonly property color upColor: Kirigami.Theme.neutralTextColor
     readonly property int plan: Plasmoid.configuration.planDownMbps
+    // peak-hold: highest down/up seen (from active tests or passive WAN traffic)
+    readonly property real peakDown: Plasmoid.configuration.peakDown
+    readonly property real peakUp: Plasmoid.configuration.peakUp
     readonly property real gaugeMax: plan > 0 ? plan : 1000
 
     Plasmoid.title: i18n("Router · Speed Test")
@@ -40,12 +43,32 @@ PlasmoidItem {
         return p === "upload" ? i18n("↑ Upload") : p === "ping" ? i18n("Ping…") : i18n("↓ Download")
     }
 
+    // passively raise the peaks from live WAN (ppp0) throughput between tests
+    RouterData {
+        id: routerData
+        section: "all"
+        interval: Plasmoid.configuration.pollInterval
+        onUpdated: {
+            var net = routerData.data.network || {}
+            var d = net.down_mbps || 0, u = net.up_mbps || 0
+            if (d > Plasmoid.configuration.peakDown) Plasmoid.configuration.peakDown = d
+            if (u > Plasmoid.configuration.peakUp) Plasmoid.configuration.peakUp = u
+        }
+    }
+
     P5Support.DataSource {
         id: runner
         engine: "executable"
         onNewData: function(source, d) {
             var s = (d.stdout || "").trim()
-            if (s) Plasmoid.configuration.lastResult = s
+            if (s) {
+                Plasmoid.configuration.lastResult = s
+                try {   // a fresh test resets the peak baseline to its measured result
+                    var r = JSON.parse(s)
+                    if (r.down_mbps) Plasmoid.configuration.peakDown = r.down_mbps
+                    if (r.up_mbps) Plasmoid.configuration.peakUp = r.up_mbps
+                } catch (e) {}
+            }
             root.running = false
             root.live = null
             disconnectSource(source)
@@ -77,6 +100,8 @@ PlasmoidItem {
         implicitWidth: Kirigami.Units.gridUnit * 16
         implicitHeight: Kirigami.Units.gridUnit * 20
 
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -102,8 +127,8 @@ PlasmoidItem {
                     anchors.centerIn: parent
                     width: Math.min(parent.width, parent.height)
                     height: width
-                    // show the speed being measured live; fall back to last result
-                    value: root.running ? root.liveMbps : (root.result ? root.result.down_mbps : 0)
+                    // live while testing; otherwise the peak-hold value
+                    value: root.running ? root.liveMbps : root.peakDown
                     maxValue: root.gaugeMax
                     // only spin briefly during ping, before any measurement arrives
                     running: root.running && root.liveMbps <= 0
@@ -119,7 +144,7 @@ PlasmoidItem {
                     }
                     PlasmaComponents.Label {
                         text: root.running ? (root.liveMbps > 0 ? root.liveMbps : "…")
-                                           : (root.result ? root.result.down_mbps : "—")
+                                           : (root.peakDown > 0 ? root.peakDown : "—")
                         color: root.accent
                         font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2.8
                         font.weight: Font.Bold
@@ -139,7 +164,7 @@ PlasmoidItem {
                 Kirigami.Icon { source: "go-up"; color: root.upColor; Layout.preferredWidth: Kirigami.Units.iconSizes.small; Layout.preferredHeight: Kirigami.Units.iconSizes.small }
                 PlasmaComponents.Label { text: i18n("Upload"); opacity: 0.75 }
                 PlasmaComponents.Label {
-                    text: (root.result ? root.result.up_mbps : "—") + " Mb/s"
+                    text: (root.peakUp > 0 ? root.peakUp : "—") + " Mb/s"
                     color: root.upColor; font.weight: Font.DemiBold
                 }
             }
@@ -178,9 +203,8 @@ PlasmoidItem {
                 horizontalAlignment: Text.AlignHCenter
                 font: Kirigami.Theme.smallFont
                 opacity: 0.55
-                text: root.running ? i18n("Testing… (~20s)")
-                      : root.result ? i18n("Last tested %1 · %2", root.result.time, root.result.server)
-                                    : i18n("Not tested yet")
+                text: root.running ? i18n("Testing…")
+                                   : i18n("Peak observed · Run to reset & retest")
             }
         }
     }

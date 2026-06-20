@@ -39,6 +39,8 @@ PlasmoidItem {
         implicitWidth: Kirigami.Units.gridUnit * 18
         implicitHeight: Kirigami.Units.gridUnit * 19
 
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -72,8 +74,11 @@ PlasmoidItem {
                 visible: Plasmoid.configuration.showCharts
                 value: net.down_mbps || 0
                 rangeMax: Plasmoid.configuration.maxMbps
+                rangeFloor: 8
                 lineColor: root.accent
                 sampleInterval: Plasmoid.configuration.pollInterval
+                paused: routerData.paused
+                tipText: function(v) { return "↓ " + Fmt.mbps(v) }
             }
 
             // upload
@@ -88,8 +93,11 @@ PlasmoidItem {
                 visible: Plasmoid.configuration.showCharts
                 value: net.up_mbps || 0
                 rangeMax: Plasmoid.configuration.maxMbps
+                rangeFloor: 8
                 lineColor: root.upColor
                 sampleInterval: Plasmoid.configuration.pollInterval
+                paused: routerData.paused
+                tipText: function(v) { return "↑ " + Fmt.mbps(v) }
             }
 
             // latency / loss

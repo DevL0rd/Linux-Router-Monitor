@@ -102,11 +102,17 @@ PlasmoidItem {
         var desired = []
         for (j = 0; j < leases.length; j++) {
             var l = leases[j]
-            var st = stByMac[(l.mac || "").toLowerCase()]
+            var lm2 = (l.mac || "").toLowerCase()
+            var st = stByMac[lm2]
+            // average bandwidth over the kept history window -> stable sort order
+            var ha = h[lm2] || []
+            var avg = 0
+            if (ha.length) { for (var z = 0; z < ha.length; z++) avg += ha[z]; avg /= ha.length }
             desired.push({
                 mac: l.mac, name: l.name || l.ip, ip: l.ip,
                 connected: l.connected === true, blocked: l.blocked === true,
                 traffic: l.traffic_bps === undefined ? -1 : l.traffic_bps,
+                avgTraffic: avg,
                 wireless: st !== undefined, band: st ? st.band : "",
                 rssi: st ? st.rssi : 0, pinned: isPinned(l.mac),
             })
@@ -114,7 +120,7 @@ PlasmoidItem {
         var by = Plasmoid.configuration.sortBy
         desired.sort(function(a, b) {
             if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-            if (by === "traffic") return (b.traffic || 0) - (a.traffic || 0)
+            if (by === "traffic") return (b.avgTraffic || 0) - (a.avgTraffic || 0)
             if (by === "signal") return (b.wireless ? b.rssi : -999) - (a.wireless ? a.rssi : -999)
             if (by === "ip") {
                 var na = a.ip.split(".").map(Number), nb = b.ip.split(".").map(Number)
@@ -163,6 +169,8 @@ PlasmoidItem {
         Layout.minimumHeight: Kirigami.Units.gridUnit * 12
         implicitWidth: Kirigami.Units.gridUnit * 26
         implicitHeight: Kirigami.Units.gridUnit * 24
+
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
 
         ColumnLayout {
             anchors.fill: parent
@@ -257,6 +265,8 @@ PlasmoidItem {
                                     anchors.fill: parent
                                     values: root.hist[(model.mac || "").toLowerCase()] || []
                                     lineColor: root.accent
+                                    rangeFloor: 1000000
+                                    tipText: function(v) { return Fmt.rate(v) }
                                 }
 
                                 RowLayout {

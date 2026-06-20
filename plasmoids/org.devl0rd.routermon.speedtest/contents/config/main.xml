@@ -7,6 +7,9 @@
     <group name="General">
         <entry name="accentColor" type="String"><default></default></entry>
         <entry name="planDownMbps" type="Int"><default>0</default></entry>
+        <entry name="pollInterval" type="Int"><default>500</default></entry>
         <entry name="lastResult" type="String"><default></default></entry>
+        <entry name="peakDown" type="Double"><default>0</default></entry>
+        <entry name="peakUp" type="Double"><default>0</default></entry>
     </group>
 </kcfg>

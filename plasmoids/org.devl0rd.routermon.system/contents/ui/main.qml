@@ -68,6 +68,8 @@ PlasmoidItem {
         implicitWidth: Kirigami.Units.gridUnit * 17
         implicitHeight: Kirigami.Units.gridUnit * 23
 
+        StatusOverlay { anchors.fill: parent; online: routerData.online; paused: routerData.paused }
+
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: Kirigami.Units.smallSpacing
@@ -118,6 +120,8 @@ PlasmoidItem {
                 rangeMax: 100
                 lineColor: root.accent
                 sampleInterval: Plasmoid.configuration.pollInterval
+                paused: routerData.paused
+                tipText: function(v) { return Math.round(v) + "% CPU" }
             }
             GridLayout {
                 Layout.fillWidth: true
@@ -126,11 +130,13 @@ PlasmoidItem {
                 columnSpacing: Kirigami.Units.largeSpacing
                 rowSpacing: 2
                 Repeater {
-                    model: (sys.cpu||{}).cores || []
+                    // count-based model so the bars persist (animate value->value,
+                    // not 0->value) across polls
+                    model: ((sys.cpu||{}).cores || []).length
                     Gauge {
                         Layout.fillWidth: true
                         label: i18n("Core %1", index)
-                        value: modelData
+                        value: ((sys.cpu||{}).cores || [])[index] || 0
                         barColor: root.accent
                     }
                 }
@@ -199,7 +205,6 @@ PlasmoidItem {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: Kirigami.Units.smallSpacing
-                visible: Plasmoid.configuration.showReboot || Plasmoid.configuration.showRestartWifi || Plasmoid.configuration.showWebUI
                 spacing: Kirigami.Units.smallSpacing
 
                 Kirigami.Separator { Layout.fillWidth: true }
@@ -235,6 +240,12 @@ PlasmoidItem {
                     icon.name: "internet-web-browser"
                     text: i18n("Open router web UI")
                     onClicked: root.openUrl(info.admin_url)
+                }
+                QQC2.Button {
+                    Layout.fillWidth: true
+                    icon.name: routerData.paused ? "media-playback-start" : "media-playback-pause"
+                    text: routerData.paused ? i18n("Resume monitoring") : i18n("Pause monitoring")
+                    onClicked: root.run("pause toggle")
                 }
             }
 

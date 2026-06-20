@@ -1,10 +1,10 @@
 /*
- * A line chart that keeps a rolling history of a single value, styled to match
- * the Plasma System Monitor graphs (filled area under a coloured line).
+ * Samples a live `value` over time into a rolling array and renders it with
+ * Sparkline (so it inherits the hover tooltip + styling). Styled to match the
+ * Plasma System Monitor graphs (filled area under a coloured line).
  */
 import QtQuick
 import org.kde.kirigami as Kirigami
-import org.kde.quickcharts as Charts
 
 Item {
     id: root
@@ -14,33 +14,33 @@ Item {
     property int maxHistory: 80
     property int sampleInterval: 2000
     property real rangeMax: 0          // 0 = auto-scale
+    property real rangeFloor: 0        // auto-scale never zooms in below this
     property bool filled: true
+    property bool paused: false        // when true, stop advancing the history
+    property var tipText: function(value, index, total) { return "" + value }
 
-    Charts.LineChart {
-        id: chart
+    property var _vals: []
+
+    Sparkline {
         anchors.fill: parent
-        smooth: true
-        lineWidth: 1.5
+        values: root._vals
+        lineColor: root.lineColor
+        filled: root.filled
+        rangeMax: root.rangeMax
+        rangeFloor: root.rangeFloor
+        tipText: root.tipText
+    }
 
-        Charts.SingleValueSource { id: liveValue; value: root.value }
-        Charts.SingleValueSource { id: lineColorSrc; value: root.lineColor }
-        Charts.SingleValueSource { id: fillColorSrc; value: Qt.alpha(root.lineColor, 0.18) }
-
-        Charts.HistoryProxySource {
-            id: history
-            source: liveValue
-            maximumHistory: root.maxHistory
-            interval: root.sampleInterval
-        }
-
-        valueSources: [ history ]
-        colorSource: lineColorSrc
-        fillColorSource: root.filled ? fillColorSrc : null
-
-        yRange {
-            from: 0
-            to: root.rangeMax
-            automatic: root.rangeMax <= 0
+    Timer {
+        interval: root.sampleInterval
+        repeat: true
+        running: !root.paused
+        onTriggered: {
+            var a = root._vals.slice()
+            a.push(root.value)
+            if (a.length > root.maxHistory)
+                a.shift()
+            root._vals = a
         }
     }
 }

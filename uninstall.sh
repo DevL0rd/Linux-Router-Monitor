@@ -7,6 +7,12 @@ BIN_DIR="$HOME/.local/bin"
 RUN_DIR="${XDG_RUNTIME_DIR:-/tmp}/$APP"
 STATE_DIR="$HOME/.local/state/$APP"
 
+echo "Stopping resident collector service..."
+systemctl --user disable --now linux-router-monitor.service 2>/dev/null || true
+rm -f ~/.config/systemd/user/linux-router-monitor.service
+systemctl --user daemon-reload 2>/dev/null || true
+rm -f ~/.config/plasma-workspace/env/linux-router-monitor.sh
+
 echo "Removing widgets..."
 for id in system network wifi dns clients speedtest; do
     kpackagetool6 -t Plasma/Applet -r "org.devl0rd.routermon.$id" >/dev/null 2>&1 \

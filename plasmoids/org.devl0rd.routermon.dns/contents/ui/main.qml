@@ -122,14 +122,16 @@ PlasmoidItem {
                     Layout.fillWidth: true
                     spacing: 0
                     PlasmaComponents.Label {
-                        Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
                         text: (root.hasDns ? root.dns.blocked_pct : 0) + "%"
                         color: root.accent
                         font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2.6
                         font.weight: Font.Bold
                     }
                     PlasmaComponents.Label {
-                        Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
                         text: i18n("of %1 queries blocked", root.hasDns ? root.dns.queries_total.toLocaleString() : "0")
                         font: Kirigami.Theme.smallFont; opacity: 0.7
                     }

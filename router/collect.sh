@@ -3,17 +3,20 @@
 # Runs ON the router (Asuswrt-Merlin / BusyBox ash). Prints a flat, easy-to-parse
 # text dump; the desktop side turns it into JSON, computes rates, merges AdGuard.
 #
-# Args: $1 ping target   $2 do_ping (1/0)   $3 do_slow (1/0)
+# Args: $1 ping target   $2 do_ping (1/0)   $3 do_slow (1/0)   $4 do_static (1/0)
 #   FAST section (always): CPU, memory, conntrack, interface counters, and the
 #     bulk per-client throughput dump (wl bs_data) -- changes second to second.
-#   SLOW section (do_slow): nvram statics, per-radio wl status/airtime/dfs/temp,
-#     ports, leases, arp, firewall, info, and per-client signal/link-rate -- they
-#     barely change, so the desktop requests them every Nth poll and carries them.
+#   SLOW section (do_slow): WAN state, per-radio wl status/airtime/dfs/temp,
+#     leases, arp, firewall, per-client signal/link-rate -- change over time.
+#   STATIC section (do_static): model/fw/lan_ip, ssid/radio/txpower, wired ports
+#     -- only change on reconfiguration, so the desktop fetches them only on a
+#     reconnect (offline -> online), not on a timer.
 #   PING: slowest of all (~2s), requested even less often.
 
 PING_TARGET="${1:-8.8.8.8}"
 DO_PING="${2:-1}"
 DO_SLOW="${3:-1}"
+DO_STATIC="${4:-0}"
 
 WLIFACES="eth7 eth8 eth9 eth10"
 band_of() {
@@ -65,7 +68,7 @@ for ifc in $WLIFACES; do
 	'
 done
 
-############ SLOW: statics + per-radio meta + leases/firewall/info ############
+############ SLOW: WAN state + per-radio dynamic meta + leases/firewall ############
 if [ "$DO_SLOW" = "1" ]; then
 	echo "wan_proto=$(nvram get wan0_proto)"
 	echo "wan_ip=$(nvram get wan0_ipaddr)"
@@ -73,17 +76,8 @@ if [ "$DO_SLOW" = "1" ]; then
 	echo "wan_dns=$(nvram get wan0_dns)"
 	echo "wan_state=$(nvram get wan0_state_t)"
 
-	echo "JFFS $(df /jffs 2>/dev/null | awk 'NR==2{print $2,$3,$4}')"
-	USBMNT=$(df 2>/dev/null | awk '/ADGUARD/{print $1,$2,$3,$4; exit}')
-	[ -n "$USBMNT" ] && echo "USB $USBMNT"
-
-	for p in eth0 eth1 eth2 eth3 eth4 eth5 eth6; do
-		media=$(ethctl "$p" media-type 2>/dev/null | grep -i "Link is" | head -1)
-		[ -n "$media" ] && echo "PORT $p ${media##*Link is }"
-	done
-
 	for ifc in $WLIFACES; do
-		band=$(band_of "$ifc"); idx=$(wlidx_of "$ifc")
+		band=$(band_of "$ifc")
 		# one awk over `wl status` -> chan/width/noise (was 3 sed pipelines)
 		ststat=$(wl -i "$ifc" status 2>/dev/null | awk '
 			/Primary channel:/ { s=$0; sub(/.*Primary channel: /,"",s); sub(/[^0-9].*/,"",s); chan=s }
@@ -96,7 +90,7 @@ if [ "$DO_SLOW" = "1" ]; then
 			END { printf "busy=%s glitch=%s badplcp=%s", b, g, p }')
 		temp=$(wl -i "$ifc" phy_tempsense 2>/dev/null | awk '{print $1}')
 		dfs=$(wl -i "$ifc" dfs_status 2>/dev/null | sed -n 's/state \([A-Za-z()-]*\).*/\1/p' | head -1)
-		echo "RADIO ifc=$ifc band=$band ssid=$(nvram get wl${idx}_ssid) radio=$(nvram get wl${idx}_radio) txpower=$(nvram get wl${idx}_txpower) temp=$temp $ststat $cimstat dfs=$dfs"
+		echo "RADIO ifc=$ifc band=$band temp=$temp $ststat $cimstat dfs=$dfs"
 	done
 
 	# per-client signal + link rates (change slowly -> only on the slow tick)
@@ -120,10 +114,23 @@ if [ "$DO_SLOW" = "1" ]; then
 	iptables -S FORWARD 2>/dev/null | grep -io 'mac-source [0-9A-Fa-f:]\{17\}' | awk '{print "BLOCKED "$2}'
 	echo "wrs_protect=$(nvram get wrs_protect_enable)"
 	echo "wrs_mals=$(nvram get wrs_mals_enable)"
+	echo "SLOW=1"
+fi
+
+############ STATIC: identity + ssid/radio/txpower + ports (reconnect only) ############
+if [ "$DO_STATIC" = "1" ]; then
 	echo "model=$(nvram get productid)"
 	echo "fw=$(nvram get buildno).$(nvram get extendno)"
 	echo "lan_ip=$(nvram get lan_ipaddr)"
-	echo "SLOW=1"
+	for p in eth0 eth1 eth2 eth3 eth4 eth5 eth6; do
+		media=$(ethctl "$p" media-type 2>/dev/null | grep -i "Link is" | head -1)
+		[ -n "$media" ] && echo "PORT $p ${media##*Link is }"
+	done
+	for ifc in $WLIFACES; do
+		band=$(band_of "$ifc"); idx=$(wlidx_of "$ifc")
+		echo "RSTATIC band=$band ssid=$(nvram get wl${idx}_ssid) radio=$(nvram get wl${idx}_radio) txpower=$(nvram get wl${idx}_txpower)"
+	done
+	echo "STATIC=1"
 fi
 
 ############ PING (least often) ############

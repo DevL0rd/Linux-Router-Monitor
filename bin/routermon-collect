@@ -68,12 +68,13 @@ def ssh_base(cfg):
     ]
 
 
-def fetch_remote(cfg, do_ping=True, do_slow=True):
+def fetch_remote(cfg, do_ping=True, do_slow=True, do_static=False):
     import subprocess
-    # args: ping_target, do_ping, do_slow
+    # args: ping_target, do_ping, do_slow, do_static
     cmd = ssh_base(cfg) + [
         f"sh {cfg.get('remote_script', '/jffs/lrm-collect.sh')} "
-        f"{cfg.get('ping_target', '8.8.8.8')} {1 if do_ping else 0} {1 if do_slow else 0}"
+        f"{cfg.get('ping_target', '8.8.8.8')} {1 if do_ping else 0} "
+        f"{1 if do_slow else 0} {1 if do_static else 0}"
     ]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     if out.returncode != 0 or "END=1" not in out.stdout:
@@ -82,8 +83,9 @@ def fetch_remote(cfg, do_ping=True, do_slow=True):
 
 
 def parse_remote(raw):
-    d = {"radios": [], "stations": [], "stations_slow": [], "leases": [], "ifaces": {},
-         "ports": [], "arp": [], "blocked": [], "rcount": [], "_stat": {}}
+    d = {"radios": [], "radios_static": [], "stations": [], "stations_slow": [],
+         "leases": [], "ifaces": {}, "ports": [], "arp": [], "blocked": [],
+         "rcount": [], "_stat": {}}
     for line in raw.splitlines():
         if not line:
             continue
@@ -98,6 +100,8 @@ def parse_remote(raw):
             d["ports"].append({"port": p[1], "link": p[2]})
         elif line.startswith("RADIO "):
             d["radios"].append(_kv(line[6:]))
+        elif line.startswith("RSTATIC "):
+            d["radios_static"].append(_kv(line[8:]))
         elif line.startswith("RCOUNT "):
             d["rcount"].append(_kv(line[7:]))
         elif line.startswith("STA "):
@@ -260,24 +264,18 @@ def build(cfg, prev):
     mt = _num(p.get("mem_total"), int); ma = _num(p.get("mem_avail"), int)
     st = _num(p.get("swap_total"), int); sf = _num(p.get("swap_free"), int)
 
-    # ---- SLOW: build statics/meta, or carry forward ----
+    # ---- SLOW: dynamic statics/meta (every slow tick), or carry forward ----
     if do_slow:
         slow = {
-            "info": {
-                "model": p.get("model"), "fw": p.get("fw"), "lan_ip": p.get("lan_ip"),
-                "admin_url": ("http://" + p["lan_ip"]) if p.get("lan_ip") else "",
-                "agh_url": cfg.get("adguard", {}).get("url", ""),
-            },
             "wan": {
                 "wan_proto": p.get("wan_proto"), "wan_ip": p.get("wan_ip"),
                 "wan_gw": p.get("wan_gw"), "wan_dns": p.get("wan_dns"),
                 "wan_up": p.get("wan_state") == "2",
             },
-            "ports": [pt for pt in p["ports"] if "Up" in pt["link"]] or p["ports"],
             "radios": [{
-                "band": r.get("band"), "ssid": r.get("ssid"), "on": r.get("radio") == "1",
+                "band": r.get("band"),
                 "chan": _num(r.get("chan"), int), "width": r.get("width"),
-                "noise": _num(r.get("noise"), int), "txpower": _num(r.get("txpower"), int),
+                "noise": _num(r.get("noise"), int),
                 "temp": _num(r.get("temp"), int), "busy": _num(r.get("busy"), int),
                 "glitch": _num(r.get("glitch"), int), "badplcp": _num(r.get("badplcp"), int),
                 "dfs": r.get("dfs"),
@@ -293,11 +291,16 @@ def build(cfg, prev):
     else:
         slow = prev.get("slow") or {}
 
+    # STATIC: identity + ssid/radio/txpower + ports, refetched only on reconnect
+    static = prev.get("static_cache") or {}
+    static_radios = static.get("radios", {})
+
     online = set(slow.get("arp_up", [])) | wifi_macs
     blocked = set(slow.get("blocked", []))
     radios = []
     for r in slow.get("radios", []):
-        radios.append({**r, "clients": rcount.get(r.get("band"), 0)})
+        band = r.get("band")
+        radios.append({**static_radios.get(band, {}), **r, "clients": rcount.get(band, 0)})
     leases = [{**l, "connected": (l.get("mac", "").lower() in online),
                "blocked": (l.get("mac", "").lower() in blocked),
                "traffic_bps": sta_traffic.get(l.get("mac", "").lower(), -1)}
@@ -310,7 +313,11 @@ def build(cfg, prev):
         "ts": now,
         "online": True,
         "paused": False,
-        "info": {**slow.get("info", {}), "uptime": _num(p.get("uptime"), float)},
+        "info": {**static.get("info", {}),
+                 "admin_url": ("http://" + static["info"]["lan_ip"])
+                              if static.get("info", {}).get("lan_ip") else "",
+                 "agh_url": cfg.get("adguard", {}).get("url", ""),
+                 "uptime": _num(p.get("uptime"), float)},
         "system": {
             "cpu": cpu,
             "load": [_num(p.get("load1")), _num(p.get("load5")), _num(p.get("load15"))],
@@ -328,7 +335,7 @@ def build(cfg, prev):
             "down_mbps": round(wan["rx_bps"] * 8 / 1e6, 2),
             "up_mbps": round(wan["tx_bps"] * 8 / 1e6, 2),
             "ping_rtt": ping_rtt, "ping_loss": ping_loss,
-            "ports": slow.get("ports", []),
+            "ports": static.get("ports", []),
             "ifaces": {k: {
                 "rx_mbps": round(ifr[k]["rx_bps"] * 8 / 1e6, 2),
                 "tx_mbps": round(ifr[k]["tx_bps"] * 8 / 1e6, 2),
@@ -341,8 +348,23 @@ def build(cfg, prev):
     }
     new_state = {"ts": now, "stat": p["_stat"], "ifaces": p["ifaces"], "sta_slow": sta_slow,
                  "tick": tick, "ping": {"rtt": ping_rtt, "loss": ping_loss},
-                 "dns_cache": dns, "agh_prev": prev.get("agh_prev") or {}, "slow": slow}
+                 "dns_cache": dns, "agh_prev": prev.get("agh_prev") or {}, "slow": slow,
+                 "static_cache": static}
     return snap, new_state
+
+
+def compute_static(cfg):
+    """Router identity + ssid/radio/txpower + wired ports. These change only on
+    reconfiguration (which drops the connection), so we refetch them only when the
+    router transitions offline -> online, not on a timer."""
+    p = parse_remote(fetch_remote(cfg, do_ping=False, do_slow=False, do_static=True))
+    return {
+        "info": {"model": p.get("model"), "fw": p.get("fw"), "lan_ip": p.get("lan_ip")},
+        "ports": [pt for pt in p["ports"] if "Up" in pt["link"]] or p["ports"],
+        "radios": {r.get("band"): {"ssid": r.get("ssid"), "on": r.get("radio") == "1",
+                                   "txpower": _num(r.get("txpower"), int)}
+                   for r in p.get("radios_static", [])},
+    }
 
 
 def compute_ping(cfg):
@@ -401,6 +423,9 @@ def refresh(cfg):
     except (ValueError, OSError):
         prev = {}
     try:
+        sc = compute_static(cfg)
+        if sc:
+            prev["static_cache"] = sc
         snap, state = build(cfg, prev)
         dns, state["agh_prev"] = compute_dns(cfg, state.get("agh_prev") or {},
                                              snap["clients"]["leases"], snap["ts"])
@@ -421,6 +446,19 @@ def refresh(cfg):
     return snap
 
 
+def _merge_static(snap, sc, cfg):
+    """Fold a freshly-fetched static block into an already-built snapshot."""
+    info = dict(sc.get("info") or {})
+    info["admin_url"] = ("http://" + info["lan_ip"]) if info.get("lan_ip") else ""
+    info["agh_url"] = cfg.get("adguard", {}).get("url", "")
+    info["uptime"] = (snap.get("info") or {}).get("uptime", 0)
+    snap["info"] = info
+    snap.setdefault("network", {})["ports"] = sc.get("ports", [])
+    sr = sc.get("radios", {})
+    for r in (snap.get("wifi") or {}).get("radios", []):
+        r.update(sr.get(r.get("band"), {}))
+
+
 def _atomic_write(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -439,6 +477,7 @@ def serve():
     except OSError:
         return  # another server is already running
     prev = {}
+    was_online = False
     while True:
         start = time.monotonic()
         try:
@@ -463,6 +502,20 @@ def serve():
                 snap = {"ts": time.time(), "online": False, "error": str(e), "paused": False}
                 ok = False
             _atomic_write(CACHE, snap)   # fast data written first (never blocked)
+            # RECONNECT (incl. first connect): router went offline -> online, so
+            # refetch the static identity/config (model/fw/ssid/radio/txpower/ports)
+            now_online = ok and snap.get("online") is not False
+            if now_online and not was_online:
+                try:
+                    sc = compute_static(cfg)
+                except Exception as e:
+                    log(f"static fetch failed: {e}")
+                    sc = None
+                if sc:
+                    prev["static_cache"] = sc
+                    _merge_static(snap, sc, cfg)
+                    _atomic_write(CACHE, snap)
+            was_online = now_online
             # SLOW tick: AdGuard (~0.6s) + WAN ping (~2.6s), each fetched after the
             # fast write and written separately so they never block fast data
             slow_every = max(1, int(cfg.get("slow_every", 10)))

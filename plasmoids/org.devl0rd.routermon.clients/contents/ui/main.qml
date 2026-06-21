@@ -1,9 +1,9 @@
 /*
  * Linux-Router-Monitor :: Clients widget
- * Device cards with pin-to-top, connected status, live traffic + per-client
- * bandwidth-history sparkline (drawn behind the action buttons), WiFi signal,
- * and per-device actions. Uses a ListModel reconciled in place so rows (and
- * their charts) persist and reorder smoothly instead of resetting each poll.
+ * Compact device rows with pin-to-top, connected status, live traffic + a
+ * per-client bandwidth-history sparkline and WiFi signal; every per-device
+ * action lives in a right-click menu. Uses a ListModel reconciled in place so
+ * rows (and their charts) persist and reorder smoothly instead of resetting.
  */
 import QtQuick
 import QtQuick.Layouts
@@ -164,7 +164,50 @@ PlasmoidItem {
     function openRename(mac, name) { prompt.mode = "rename"; prompt.mac = mac; promptField.text = name; prompt.open() }
     function openReserve(mac, ip) { prompt.mode = "reserve"; prompt.mac = mac; promptField.text = ip; prompt.open() }
 
+    // ---- per-client right-click menu (all the old per-row actions) ----
+    function openClientMenu(mac, ip, name, wireless, blocked, pinned) {
+        clientMenu.mac = mac; clientMenu.ip = ip; clientMenu.cname = name
+        clientMenu.wireless = wireless; clientMenu.blocked = blocked; clientMenu.pinned = pinned
+        clientMenu.popup()
+    }
+    QQC2.Menu {
+        id: clientMenu
+        property string mac: ""
+        property string ip: ""
+        property string cname: ""
+        property bool wireless: false
+        property bool blocked: false
+        property bool pinned: false
+        QQC2.MenuItem {
+            text: clientMenu.pinned ? i18n("Unpin") : i18n("Pin to top")
+            icon.name: clientMenu.pinned ? "window-unpin" : "window-pin"
+            onTriggered: root.togglePin(clientMenu.mac)
+        }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem { text: i18n("SSH"); icon.name: "utilities-terminal"; onTriggered: root.launch("konsole -e ssh " + root.sshTarget(clientMenu.ip)) }
+        QQC2.MenuItem { text: i18n("Browse files (SMB)"); icon.name: "folder-remote"; onTriggered: root.launch("xdg-open smb://" + clientMenu.ip + "/") }
+        QQC2.MenuItem { text: i18n("Ping"); icon.name: "network-connect"; onTriggered: root.launch("konsole -e bash -c \"ping " + clientMenu.ip + "; read -n1 -p Done\"") }
+        QQC2.MenuItem { text: i18n("Port scan (nmap)"); icon.name: "system-search"; onTriggered: root.launch("konsole -e bash -c \"nmap " + clientMenu.ip + " || echo nmap-not-installed; read -n1 -p Done\"") }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem { text: i18n("Copy IP"); icon.name: "edit-copy"; onTriggered: root.copy(clientMenu.ip) }
+        QQC2.MenuItem { text: i18n("Copy MAC"); icon.name: "network-card"; onTriggered: root.copy(clientMenu.mac) }
+        QQC2.MenuItem { text: i18n("Rename…"); icon.name: "edit-rename"; onTriggered: root.openRename(clientMenu.mac, clientMenu.cname) }
+        QQC2.MenuItem { text: i18n("Reserve IP…"); icon.name: "bookmark-new"; onTriggered: root.openReserve(clientMenu.mac, clientMenu.ip) }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem {
+            visible: clientMenu.wireless; height: visible ? implicitHeight : 0
+            text: i18n("Disconnect (WiFi)"); icon.name: "network-disconnect"
+            onTriggered: root.ctlRun("disconnect " + clientMenu.mac)
+        }
+        QQC2.MenuItem {
+            text: clientMenu.blocked ? i18n("Unblock internet") : i18n("Block internet")
+            icon.name: clientMenu.blocked ? "dialog-ok-apply" : "dialog-cancel"
+            onTriggered: root.ctlRun((clientMenu.blocked ? "unblock " : "block ") + clientMenu.mac)
+        }
+    }
+
     fullRepresentation: Item {
+        clip: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 20
         Layout.minimumHeight: Kirigami.Units.gridUnit * 12
         implicitWidth: Kirigami.Units.gridUnit * 26
@@ -219,14 +262,12 @@ PlasmoidItem {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: Kirigami.Units.smallSpacing
-                                QQC2.ToolButton {
-                                    icon.name: model.pinned ? "window-pin" : "window-unpin"
-                                    icon.color: model.pinned ? root.accent : Kirigami.Theme.textColor
-                                    flat: true
-                                    implicitWidth: Kirigami.Units.iconSizes.medium
-                                    implicitHeight: Kirigami.Units.iconSizes.medium
-                                    onClicked: root.togglePin(model.mac)
-                                    QQC2.ToolTip.text: i18n("Pin to top"); QQC2.ToolTip.visible: hovered
+                                Kirigami.Icon {
+                                    visible: model.pinned
+                                    source: "window-pin"
+                                    color: root.accent
+                                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
                                 }
                                 Kirigami.Icon {
                                     source: model.wireless ? "network-wireless" : "network-wired"
@@ -256,46 +297,21 @@ PlasmoidItem {
                                 }
                             }
 
-                            // line 2: bandwidth-history sparkline with buttons over its bottom-right
-                            Item {
+                            // line 2: bandwidth-history sparkline (actions are in the right-click menu)
+                            Sparkline {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing
-
-                                Sparkline {
-                                    anchors.fill: parent
-                                    values: root.hist[(model.mac || "").toLowerCase()] || []
-                                    lineColor: root.accent
-                                    rangeFloor: 1000000
-                                    tipText: function(v) { return Fmt.rate(v) }
-                                }
-
-                                RowLayout {
-                                    id: btnRow
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    spacing: 0
-                                    ActionBtn { visible: Plasmoid.configuration.showSsh; iconName: "utilities-terminal"; tip: i18n("SSH"); onTrig: root.launch("konsole -e ssh " + root.sshTarget(model.ip)) }
-                                    ActionBtn { visible: Plasmoid.configuration.showFiles; iconName: "folder-remote"; tip: i18n("Browse files (SMB)"); onTrig: root.launch("xdg-open smb://" + model.ip + "/") }
-                                    ActionBtn { visible: Plasmoid.configuration.showPing; iconName: "network-connect"; tip: i18n("Ping"); onTrig: root.launch("konsole -e bash -c \"ping " + model.ip + "; read -n1 -p Done\"") }
-                                    ActionBtn { visible: Plasmoid.configuration.showScan; iconName: "system-search"; tip: i18n("Port scan (nmap)"); onTrig: root.launch("konsole -e bash -c \"nmap " + model.ip + " || echo nmap-not-installed; read -n1 -p Done\"") }
-                                    ActionBtn { visible: Plasmoid.configuration.showCopyIp; iconName: "edit-copy"; tip: i18n("Copy IP"); onTrig: root.copy(model.ip) }
-                                    ActionBtn { visible: Plasmoid.configuration.showCopyMac; iconName: "network-card"; tip: i18n("Copy MAC"); onTrig: root.copy(model.mac) }
-                                    ActionBtn { visible: Plasmoid.configuration.showRename; iconName: "edit-rename"; tip: i18n("Rename"); onTrig: root.openRename(model.mac, model.name) }
-                                    ActionBtn { visible: Plasmoid.configuration.showReserve; iconName: "bookmark-new"; tip: i18n("Reserve IP"); onTrig: root.openReserve(model.mac, model.ip) }
-                                    ActionBtn {
-                                        visible: model.wireless && Plasmoid.configuration.showDisconnect
-                                        iconName: "network-disconnect"; tip: i18n("Disconnect (WiFi)")
-                                        onTrig: root.ctlRun("disconnect " + model.mac)
-                                    }
-                                    ActionBtn {
-                                        visible: Plasmoid.configuration.showBlock
-                                        iconName: model.blocked ? "dialog-ok-apply" : "dialog-cancel"
-                                        danger: !model.blocked
-                                        tip: model.blocked ? i18n("Unblock internet") : i18n("Block internet")
-                                        onTrig: root.ctlRun((model.blocked ? "unblock " : "block ") + model.mac)
-                                    }
-                                }
+                                Layout.preferredHeight: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing
+                                values: root.hist[(model.mac || "").toLowerCase()] || []
+                                lineColor: root.accent
+                                rangeFloor: 1000000
+                                tipText: function(v) { return Fmt.rate(v) }
                             }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton    // hover passes to the sparkline below
+                            onClicked: root.openClientMenu(model.mac, model.ip, model.name, model.wireless, model.blocked, model.pinned)
                         }
                     }
                 }
@@ -303,19 +319,4 @@ PlasmoidItem {
         }
     }
 
-    component ActionBtn: QQC2.ToolButton {
-        property string iconName: ""
-        property string tip: ""
-        property bool danger: false
-        signal trig()
-        flat: true
-        icon.name: iconName
-        icon.color: danger ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
-        implicitWidth: Kirigami.Units.iconSizes.medium + Kirigami.Units.smallSpacing
-        implicitHeight: Kirigami.Units.iconSizes.medium
-        onClicked: trig()
-        QQC2.ToolTip.text: tip
-        QQC2.ToolTip.visible: hovered
-        QQC2.ToolTip.delay: 400
-    }
 }

@@ -9,16 +9,6 @@ Kirigami.FormLayout {
     property alias cfg_accentColor: accent.text
     property alias cfg_sshUser: sshUser.text
     property string cfg_sortBy: "traffic"
-    property alias cfg_showSsh: bSsh.checked
-    property alias cfg_showFiles: bFiles.checked
-    property alias cfg_showPing: bPing.checked
-    property alias cfg_showScan: bScan.checked
-    property alias cfg_showCopyIp: bCopyIp.checked
-    property alias cfg_showCopyMac: bCopyMac.checked
-    property alias cfg_showRename: bRename.checked
-    property alias cfg_showReserve: bReserve.checked
-    property alias cfg_showDisconnect: bDisconnect.checked
-    property alias cfg_showBlock: bBlock.checked
 
     RowLayout {
         Kirigami.FormData.label: i18n("Poll interval:")
@@ -41,19 +31,6 @@ Kirigami.FormLayout {
         Kirigami.FormData.label: i18n("SSH user:")
         placeholderText: i18n("(none — ssh <ip>)")
     }
-
-    Item { Kirigami.FormData.isSection: true }
-
-    QQC2.CheckBox { id: bSsh; Kirigami.FormData.label: i18n("Buttons:"); text: i18n("SSH") }
-    QQC2.CheckBox { id: bFiles; text: i18n("Browse files (SMB)") }
-    QQC2.CheckBox { id: bPing; text: i18n("Ping") }
-    QQC2.CheckBox { id: bScan; text: i18n("Port scan (nmap)") }
-    QQC2.CheckBox { id: bCopyIp; text: i18n("Copy IP") }
-    QQC2.CheckBox { id: bCopyMac; text: i18n("Copy MAC") }
-    QQC2.CheckBox { id: bRename; text: i18n("Rename") }
-    QQC2.CheckBox { id: bReserve; text: i18n("Reserve IP") }
-    QQC2.CheckBox { id: bDisconnect; text: i18n("Disconnect (WiFi)") }
-    QQC2.CheckBox { id: bBlock; text: i18n("Block / unblock internet") }
 
     Item { Kirigami.FormData.isSection: true }
 

@@ -1,6 +1,6 @@
 /*
  * Linux-Router-Monitor :: Network widget
- * WAN throughput, latency, packet loss and wired port link speeds.
+ * WAN throughput, latency and packet loss.
  */
 import QtQuick
 import QtQuick.Layouts
@@ -34,6 +34,7 @@ PlasmoidItem {
     }
 
     fullRepresentation: Item {
+        clip: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 14
         Layout.minimumHeight: Kirigami.Units.gridUnit * 13
         implicitWidth: Kirigami.Units.gridUnit * 18
@@ -121,26 +122,6 @@ PlasmoidItem {
                         text: (net.ping_loss||0) + "%"
                         color: Fmt.heat(net.ping_loss||0, 1, 5, Kirigami.Theme)
                         font.weight: Font.DemiBold
-                    }
-                }
-            }
-
-            // ports
-            ColumnLayout {
-                Layout.fillWidth: true
-                visible: Plasmoid.configuration.showPorts && (net.ports||[]).length > 0
-                spacing: 1
-                PlasmaComponents.Label { text: i18n("Wired ports"); font.weight: Font.DemiBold; Layout.topMargin: Kirigami.Units.smallSpacing }
-                Repeater {
-                    model: net.ports || []
-                    RowLayout {
-                        Layout.fillWidth: true
-                        PlasmaComponents.Label { text: modelData.port; font: Kirigami.Theme.smallFont; opacity: 0.8; Layout.fillWidth: true }
-                        PlasmaComponents.Label {
-                            text: modelData.link.replace("Up at Speed: ", "").replace(", Duplex: FD", " FD")
-                            font: Kirigami.Theme.smallFont
-                            color: modelData.link.indexOf("Up") >= 0 ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
-                        }
                     }
                 }
             }

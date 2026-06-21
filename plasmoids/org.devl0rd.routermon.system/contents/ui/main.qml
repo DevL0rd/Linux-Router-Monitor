@@ -63,6 +63,7 @@ PlasmoidItem {
     Timer { id: resultTimer; interval: 5000; onTriggered: root.lastResult = "" }
 
     fullRepresentation: Item {
+        clip: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 14
         Layout.minimumHeight: Kirigami.Units.gridUnit * 14
         implicitWidth: Kirigami.Units.gridUnit * 17

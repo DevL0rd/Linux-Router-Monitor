@@ -39,6 +39,7 @@ PlasmoidItem {
     }
 
     fullRepresentation: Item {
+        clip: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 15
         Layout.minimumHeight: Kirigami.Units.gridUnit * 14
         implicitWidth: Kirigami.Units.gridUnit * 19

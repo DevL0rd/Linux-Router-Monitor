@@ -8,7 +8,6 @@
         <entry name="pollInterval" type="Int"><default>500</default></entry>
         <entry name="accentColor" type="String"><default></default></entry>
         <entry name="showCharts" type="Bool"><default>true</default></entry>
-        <entry name="showPorts" type="Bool"><default>true</default></entry>
         <entry name="maxMbps" type="Int"><default>0</default></entry>
     </group>
 </kcfg>

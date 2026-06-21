@@ -8,7 +8,6 @@ Kirigami.FormLayout {
     property alias cfg_pollInterval: pollSpin.value
     property alias cfg_accentColor: accent.text
     property alias cfg_showCharts: charts.checked
-    property alias cfg_showPorts: ports.checked
     property alias cfg_maxMbps: maxSpin.value
 
     RowLayout {
@@ -30,7 +29,6 @@ Kirigami.FormLayout {
         }
     }
     QQC2.CheckBox { id: charts; Kirigami.FormData.label: i18n("Graphs:"); text: i18n("Show throughput charts") }
-    QQC2.CheckBox { id: ports; text: i18n("Show wired port link speeds") }
 
     Item { Kirigami.FormData.isSection: true }
 

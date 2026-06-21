@@ -14,11 +14,12 @@ import org.kde.plasma.plasmoid
 import org.kde.plasma.plasma5support as P5Support
 import "lib"
 import "lib/Format.js" as Fmt
+import "lib/Ring.js" as Ring
 
 PlasmoidItem {
     id: root
 
-    property var hist: ({})          // mac(lower) -> [recent traffic_bps]
+    property var hist: ({})          // mac(lower) -> ring buffer of recent traffic_bps
     property string lastResult: ""
     readonly property color accent: Plasmoid.configuration.accentColor !== ""
         ? Plasmoid.configuration.accentColor : Kirigami.Theme.highlightColor
@@ -87,15 +88,15 @@ PlasmoidItem {
         for (var i = 0; i < stations.length; i++)
             stByMac[(stations[i].mac || "").toLowerCase()] = stations[i]
 
-        // append to per-mac history (new object so bindings update)
+        // append to per-mac ring buffer (new outer object so bindings update;
+        // the rings are reused/mutated in place -> O(1) per device, no realloc)
         var h = {}
         for (var j = 0; j < leases.length; j++) {
             var lm = (leases[j].mac || "").toLowerCase()
-            var arr = (root.hist[lm] || []).slice()
+            var r = root.hist[lm] || Ring.make(40)
             var t = leases[j].traffic_bps
-            arr.push(t > 0 ? t : 0)
-            if (arr.length > 40) arr.shift()
-            h[lm] = arr
+            Ring.push(r, t > 0 ? t : 0)
+            h[lm] = r
         }
         root.hist = h
 
@@ -105,9 +106,7 @@ PlasmoidItem {
             var lm2 = (l.mac || "").toLowerCase()
             var st = stByMac[lm2]
             // average bandwidth over the kept history window -> stable sort order
-            var ha = h[lm2] || []
-            var avg = 0
-            if (ha.length) { for (var z = 0; z < ha.length; z++) avg += ha[z]; avg /= ha.length }
+            var avg = h[lm2] ? Ring.avg(h[lm2]) : 0
             desired.push({
                 mac: l.mac, name: l.name || l.ip, ip: l.ip,
                 connected: l.connected === true, blocked: l.blocked === true,
@@ -301,7 +300,7 @@ PlasmoidItem {
                             Sparkline {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: Kirigami.Units.gridUnit * 2.2
-                                values: root.hist[(model.mac || "").toLowerCase()] || []
+                                values: { var r = root.hist[(model.mac || "").toLowerCase()]; return r ? Ring.values(r) : [] }
                                 lineColor: root.accent
                                 rangeFloor: 1000000
                                 tipText: function(v) { return Fmt.rate(v) }

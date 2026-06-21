@@ -71,7 +71,7 @@ PlasmoidItem {
                 PlasmaComponents.Label { text: Fmt.mbps(net.down_mbps); color: root.accent; font.weight: Font.Bold }
             }
             HistoryChart {
-                Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 3
+                Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
                 visible: Plasmoid.configuration.showCharts
                 value: net.down_mbps || 0
                 rangeMax: Plasmoid.configuration.maxMbps
@@ -90,7 +90,7 @@ PlasmoidItem {
                 PlasmaComponents.Label { text: Fmt.mbps(net.up_mbps); color: root.upColor; font.weight: Font.Bold }
             }
             HistoryChart {
-                Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 3
+                Layout.fillWidth: true; Layout.preferredHeight: Kirigami.Units.gridUnit * 2.5
                 visible: Plasmoid.configuration.showCharts
                 value: net.up_mbps || 0
                 rangeMax: Plasmoid.configuration.maxMbps

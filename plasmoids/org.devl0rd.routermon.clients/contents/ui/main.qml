@@ -300,7 +300,7 @@ PlasmoidItem {
                             // line 2: bandwidth-history sparkline (actions are in the right-click menu)
                             Sparkline {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.small + Kirigami.Units.smallSpacing
+                                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.2
                                 values: root.hist[(model.mac || "").toLowerCase()] || []
                                 lineColor: root.accent
                                 rangeFloor: 1000000

@@ -4,6 +4,7 @@
  * to overlay text.
  */
 import QtQuick
+import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 
 Item {
@@ -11,6 +12,7 @@ Item {
 
     property real value: 0
     property real maxValue: 100
+    property string tip: ""                 // hover tooltip; falls back to value/max
     property color color: Kirigami.Theme.highlightColor
     property color trackColor: Qt.alpha(Kirigami.Theme.textColor, 0.12)
     property bool running: false
@@ -67,4 +69,9 @@ Item {
             }
         }
     }
+
+    HoverHandler { id: hover }
+    QQC2.ToolTip.visible: hover.hovered && !g.running
+    QQC2.ToolTip.text: g.tip !== "" ? g.tip : (Math.round(g.value) + " / " + Math.round(g.maxValue))
+    QQC2.ToolTip.delay: 400
 }

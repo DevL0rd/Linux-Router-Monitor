@@ -58,6 +58,13 @@ function heat(v, warn, crit, theme) {
     return theme.positiveTextColor;
 }
 
+// smooth fill gradient for a 0..100 value: blue when low/empty, through
+// green/yellow, to red when full. Used for meters, bars and per-core fills.
+function grad(v) {
+    var t = Math.max(0, Math.min(1, (v || 0) / 100));
+    return Qt.hsla((1 - t) * 0.66, 0.62, 0.55, 1.0);
+}
+
 // rssi: closer to 0 is better
 function rssiColor(v, theme) {
     if (v >= -60) return theme.positiveTextColor;

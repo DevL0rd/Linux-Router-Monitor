@@ -49,7 +49,7 @@ PlasmoidItem {
         section: "all"
         interval: Plasmoid.configuration.pollInterval
         onUpdated: {
-            var net = routerData.data.network || {}
+            var net = routerData.snapshot.network || {}
             var d = net.down_mbps || 0, u = net.up_mbps || 0
             if (d > Plasmoid.configuration.peakDown) Plasmoid.configuration.peakDown = d
             if (u > Plasmoid.configuration.peakUp) Plasmoid.configuration.peakUp = u

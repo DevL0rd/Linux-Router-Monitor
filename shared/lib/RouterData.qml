@@ -17,7 +17,7 @@ Item {
     property int interval: 2000
     property string tool: "$HOME/.local/bin/routermon-collect"
 
-    property var data: ({})
+    property var snapshot: ({})
     property bool online: false
     property bool paused: false
     property bool ready: false
@@ -53,7 +53,7 @@ Item {
                 root.paused = parsed.paused === true
                 root.error = parsed.error || ""
                 if (!root.paused) {
-                    root.data = parsed
+                    root.snapshot = parsed
                     root.ready = true
                     root.updated()
                 }

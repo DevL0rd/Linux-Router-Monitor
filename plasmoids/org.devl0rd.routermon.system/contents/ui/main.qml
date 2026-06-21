@@ -16,9 +16,9 @@ import "lib/Format.js" as Fmt
 PlasmoidItem {
     id: root
 
-    readonly property var sys: routerData.data.system || ({})
-    readonly property var info: routerData.data.info || ({})
-    readonly property var radios: (routerData.data.wifi || {}).radios || []
+    readonly property var sys: routerData.snapshot.system || ({})
+    readonly property var info: routerData.snapshot.info || ({})
+    readonly property var radios: (routerData.snapshot.wifi || {}).radios || []
     readonly property color accent: Plasmoid.configuration.accentColor !== ""
         ? Plasmoid.configuration.accentColor : Kirigami.Theme.highlightColor
 

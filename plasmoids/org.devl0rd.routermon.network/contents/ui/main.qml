@@ -13,8 +13,8 @@ import "lib/Format.js" as Fmt
 PlasmoidItem {
     id: root
 
-    readonly property var net: routerData.data.network || ({})
-    readonly property var info: routerData.data.info || ({})
+    readonly property var net: routerData.snapshot.network || ({})
+    readonly property var info: routerData.snapshot.info || ({})
     readonly property color accent: Plasmoid.configuration.accentColor !== ""
         ? Plasmoid.configuration.accentColor : Kirigami.Theme.highlightColor
     readonly property color upColor: Kirigami.Theme.neutralTextColor

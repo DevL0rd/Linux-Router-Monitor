@@ -81,8 +81,8 @@ PlasmoidItem {
 
     // ---- build sorted desired list + reconcile the model in place ----
     function sync() {
-        var leases = (routerData.data.clients || {}).leases || []
-        var stations = (routerData.data.wifi || {}).stations || []
+        var leases = (routerData.snapshot.clients || {}).leases || []
+        var stations = (routerData.snapshot.wifi || {}).stations || []
         var stByMac = {}
         for (var i = 0; i < stations.length; i++)
             stByMac[(stations[i].mac || "").toLowerCase()] = stations[i]

@@ -15,7 +15,7 @@ import "lib/Format.js" as Fmt
 PlasmoidItem {
     id: root
 
-    readonly property var dns: routerData.data.dns || null
+    readonly property var dns: routerData.snapshot.dns || null
     readonly property bool hasDns: dns !== null
     readonly property color accent: Plasmoid.configuration.accentColor !== ""
         ? Plasmoid.configuration.accentColor : Kirigami.Theme.highlightColor
@@ -42,7 +42,7 @@ PlasmoidItem {
     }
     function setProtection(on) { runner.connectSource(root.ctl + " protection " + (on ? "on" : "off")) }
     function openUrl(url) { runner.connectSource("xdg-open " + url) }
-    readonly property string aghUrl: (routerData.data.info || {}).agh_url || ""
+    readonly property string aghUrl: (routerData.snapshot.info || {}).agh_url || ""
 
     component MiniStat: ColumnLayout {
         property string label: ""

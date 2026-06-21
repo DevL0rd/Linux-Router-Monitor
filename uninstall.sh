@@ -11,7 +11,7 @@ echo "Stopping resident collector service..."
 systemctl --user disable --now linux-router-monitor.service 2>/dev/null || true
 rm -f ~/.config/systemd/user/linux-router-monitor.service
 systemctl --user daemon-reload 2>/dev/null || true
-rm -f ~/.config/plasma-workspace/env/linux-router-monitor.sh
+rm -f ~/.config/environment.d/linux-router-monitor.conf ~/.config/plasma-workspace/env/linux-router-monitor.sh
 
 echo "Removing widgets..."
 for id in system network wifi dns clients speedtest; do

@@ -65,10 +65,14 @@ systemctl --user enable --now linux-router-monitor.service
 echo "Enabled resident collector service (linux-router-monitor.service)"
 
 # --- allow the widgets to read the tmpfs snapshot in-process via QML XHR ---
-# (Qt blocks file:// XHR unless this is set; applies to the whole Plasma session)
-mkdir -p ~/.config/plasma-workspace/env
-echo 'export QML_XHR_ALLOW_FILE_READ=1' > ~/.config/plasma-workspace/env/linux-router-monitor.sh
-echo "Set QML_XHR_ALLOW_FILE_READ=1 for the Plasma session (in-process widget reads)"
+# (Qt blocks file:// XHR unless this is set.) Use environment.d so the systemd
+# user manager always provides it -- including a mid-session `systemctl --user
+# restart plasma-plasmashell`, which the login-only plasma-workspace/env misses.
+mkdir -p ~/.config/environment.d
+echo 'QML_XHR_ALLOW_FILE_READ=1' > ~/.config/environment.d/linux-router-monitor.conf
+systemctl --user set-environment QML_XHR_ALLOW_FILE_READ=1 2>/dev/null || true  # apply now, no relogin
+rm -f ~/.config/plasma-workspace/env/linux-router-monitor.sh                    # migrate off old login-only location
+echo "Set QML_XHR_ALLOW_FILE_READ=1 (environment.d; survives plasma restarts)"
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) echo "  Note: $BIN_DIR is not in your PATH (widgets use absolute paths, so this is fine)." ;;

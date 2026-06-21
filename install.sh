@@ -112,6 +112,9 @@ echo "Add them via right-click desktop/panel -> Add Widgets -> search \"Router\"
 echo "If they don't appear yet, run:  kquitapp6 plasmashell && kstart plasmashell"
 echo "Logs: $HOME/.local/state/$APP/monitor.log"
 
-echo "Reloading Plasma…"
-systemctl --user restart plasma-plasmashell.service 2>/dev/null \
-    || { kquitapp6 plasmashell 2>/dev/null; (kstart plasmashell >/dev/null 2>&1 &); }
+# reload Plasma at the end -- unless --no-reload (so bulk installs can reload once)
+if ! printf '%s\n' "$@" | grep -qx -- --no-reload; then
+    echo "Reloading Plasma…"
+    systemctl --user restart plasma-plasmashell.service 2>/dev/null \
+        || { kquitapp6 plasmashell 2>/dev/null; (kstart plasmashell >/dev/null 2>&1 &); }
+fi
